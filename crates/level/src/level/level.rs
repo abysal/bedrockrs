@@ -219,11 +219,33 @@ where
     }
 
     /// Fetches all chunks that satisfy the filter
-    pub fn get_chunks<T: LevelChunkTrait<Self, UserLevel = Self>>(
+    pub fn get_chunks<
+        T: LevelChunkTrait<
+            Self,
+            UserLevel = Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >,
+    >(
         &mut self,
         mut filter: ChunkSelectionFilter,
         min_max: Vec2<i8>,
-    ) -> Result<Vec<T>, T::Err> {
+    ) -> Result<Vec<T>, T::Err>
+    where
+        <<T as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+    {
         let positions: Vec<_> = self
             .chunk_existence
             .iter()
@@ -347,20 +369,73 @@ where
     /// Sets a whole chunk in the saved position of the chunk and the saved dimension.
     /// `xz_override` lets the xz position be replaced if copying the chunk
     /// `dim_override` lets the dimension of the chunk be changed if copying the chunk
-    pub fn set_chunk_ex<UserChunkType: LevelChunkTrait<Self, UserLevel = Self>>(
+    pub fn set_chunk_ex<
+        UserChunkType: LevelChunkTrait<
+            Self,
+            UserLevel = Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >,
+    >(
         &mut self,
         chnk: UserChunkType,
         xz_override: Option<Vec2<i32>>,
         dim_override: Option<Dimension>,
-    ) -> Result<(), UserChunkType::Err> {
+    ) -> Result<(), UserChunkType::Err>
+    where
+        <<UserChunkType as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+    {
         chnk.write_to_world(self, xz_override, dim_override)
     }
 
     /// Sets a whole chunk in the saved position of the chunk and the saved dimension.
-    pub fn set_chunk<UserChunkType: LevelChunkTrait<Self, UserLevel = Self>>(
+    pub fn set_chunk<
+        UserChunkType: LevelChunkTrait<
+            Self,
+            UserLevel = Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >,
+    >(
         &mut self,
         chnk: UserChunkType,
-    ) -> Result<(), UserChunkType::Err> {
+    ) -> Result<(), UserChunkType::Err>
+    where
+        <<UserChunkType as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+        <<UserChunkType as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+    {
         self.set_chunk_ex(chnk, None, None)
     }
 
@@ -370,7 +445,13 @@ where
     pub fn get_chunk<
         UserChunkType: LevelChunkTrait<
             Self,
-            UserLevel = Self,
+            UserLevel = Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
             Err = LevelError<
                 UserWorldInterface::Err,
                 UserSubChunkDecoder::Err,
@@ -382,7 +463,27 @@ where
         xz: Vec2<i32>,
         dim: Dimension,
         min_max: Option<Vec2<i8>>,
-    ) -> Result<UserChunkType, UserChunkType::Err> {
+    ) -> Result<UserChunkType, UserChunkType::Err>
+    where
+        <<UserChunkType as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+        <<UserChunkType as LevelChunkTrait<
+            Level<
+                UserState,
+                UserWorldInterface,
+                UserBlockType,
+                UserSubChunkType,
+                UserSubChunkDecoder,
+            >,
+        >>::UserSubchunk as SubChunkTrait>::BlockType: WorldBlockTrait,
+    {
         UserChunkType::load_from_world(
             min_max.unwrap_or(self.config.sub_chunk_range.clone()),
             xz,

@@ -9,7 +9,7 @@ use std::path::Path;
 #[test]
 fn world_test(
 ) -> Result<(), BedrockLevelError<RawInterface, BedrockSubChunkDecoder, BedrockSubChunk>> {
-    let wld_path = "./test_level/db";
+    let wld_path = "./test_level";
 
     println!("Loading World");
 
