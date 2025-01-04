@@ -34,24 +34,49 @@ pub trait RawWorldTrait: Sized {
 
     type UserState;
 
-    fn set_subchunk_raw(
+    fn write_bytes_to_key(
         &mut self,
         chunk_info: ChunkKey,
         chunk_bytes: &[u8],
         state: &mut Self::UserState,
     ) -> Result<(), Self::Err>;
 
-    fn get_subchunk_raw(
+    fn get_bytes_from_key(
         &mut self,
         chunk_info: ChunkKey,
         state: &mut Self::UserState,
     ) -> Result<Option<Vec<u8>>, Self::Err>;
 
+    fn delete_bytes_at_key(
+        &mut self,
+        chunk_info: ChunkKey,
+        state: &mut Self::UserState,
+    ) -> Result<(), Self::Err>;
+
+    fn set_subchunk_raw(
+        &mut self,
+        chunk_info: ChunkKey,
+        chunk_bytes: &[u8],
+        state: &mut Self::UserState,
+    ) -> Result<(), Self::Err> {
+        self.write_bytes_to_key(chunk_info, chunk_bytes, state)
+    }
+
+    fn get_subchunk_raw(
+        &mut self,
+        chunk_info: ChunkKey,
+        state: &mut Self::UserState,
+    ) -> Result<Option<Vec<u8>>, Self::Err> {
+        self.get_bytes_from_key(chunk_info, state)
+    }
+
     fn chunk_exists(
         &mut self,
         chunk_info: ChunkKey,
         state: &mut Self::UserState,
-    ) -> Result<bool, Self::Err>;
+    ) -> Result<bool, Self::Err> {
+        Ok(self.get_bytes_from_key(chunk_info, state)?.is_some())
+    }
 
     fn write_subchunk_batch(
         &mut self,
@@ -65,11 +90,13 @@ pub trait RawWorldTrait: Sized {
         state: &mut Self::UserState,
     ) -> Result<(), Self::Err>;
 
-    fn exist_chunk(
+    fn mark_exist_chunk(
         &mut self,
         chunk_info: ChunkKey,
         state: &mut Self::UserState,
-    ) -> Result<(), Self::Err>;
+    ) -> Result<(), Self::Err> {
+        self.write_bytes_to_key(chunk_info, &[], state)
+    }
 
     fn build_key(key: &ChunkKey) -> Vec<u8>;
 
@@ -85,4 +112,30 @@ pub trait RawWorldTrait: Sized {
         &mut self,
         state: &mut Self::UserState,
     ) -> Result<HashSet<(Dimension, Vec2<i32>)>, Self::Err>;
+
+    fn delete_chunk(
+        &mut self,
+        xz: Vec2<i32>,
+        dimension: Dimension,
+        subchunk_range: Vec2<i8>,
+        state: &mut Self::UserState,
+    ) -> Result<(), Self::Err> {
+        for y in subchunk_range.x..=subchunk_range.y {
+            self.delete_subchunk(xz, dimension, y, state)?
+        }
+
+        self.delete_bytes_at_key(ChunkKey::chunk_marker(xz, dimension), state)?;
+
+        Ok(())
+    }
+
+    fn delete_subchunk(
+        &mut self,
+        xz: Vec2<i32>,
+        dimension: Dimension,
+        y: i8,
+        state: &mut Self::UserState,
+    ) -> Result<(), Self::Err> {
+        self.delete_bytes_at_key(ChunkKey::new_subchunk(xz, dimension, y), state)
+    }
 }

@@ -152,6 +152,33 @@ where
         &mut self.db
     }
 
+    pub fn remove_chunk(
+        &mut self,
+        xz: Vec2<i32>,
+        dimension: Dimension,
+    ) -> Result<(), UserWorldInterface::Err> {
+        self.remove_chunk_ex(xz, dimension, self.config.sub_chunk_range.clone())
+    }
+
+    pub fn remove_chunk_ex(
+        &mut self,
+        xz: Vec2<i32>,
+        dimension: Dimension,
+        subchunk_range: Vec2<i8>,
+    ) -> Result<(), UserWorldInterface::Err> {
+        self.db
+            .delete_chunk(xz, dimension, subchunk_range, &mut self.state)
+    }
+
+    pub fn remove_subchunk(
+        &mut self,
+        xz: Vec2<i32>,
+        dimension: Dimension,
+        y: i8,
+    ) -> Result<(), UserWorldInterface::Err> {
+        self.db.delete_subchunk(xz, dimension, y, &mut self.state)
+    }
+
     /// Checks if a given chunk exists
     pub fn chunk_exists(&mut self, xz: Vec2<i32>, dimension: Dimension) -> bool {
         self.chunk_existence.contains(&(dimension, xz))
@@ -427,7 +454,7 @@ where
     fn flush_existence_buffer(&mut self) -> Result<(), UserWorldInterface::Err> {
         for (dim, pos) in &self.chunk_existence {
             self.db
-                .exist_chunk(ChunkKey::chunk_marker(*pos, *dim), &mut self.state)?
+                .mark_exist_chunk(ChunkKey::chunk_marker(*pos, *dim), &mut self.state)?
         }
         Ok(())
     }
