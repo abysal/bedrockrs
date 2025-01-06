@@ -3,7 +3,7 @@ use crate::level::db_interface::key_level::KeyTypeTag;
 use bedrockrs_shared::world::dimension::Dimension;
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::io::Cursor;
-use vek::Vec2;
+use vek::{Vec2, Vec3};
 
 #[derive(Debug)]
 pub struct ChunkKey {
@@ -14,12 +14,12 @@ pub struct ChunkKey {
 }
 
 impl ChunkKey {
-    pub fn new_subchunk(xz: Vec2<i32>, dim: Dimension, y_index: i8) -> Self {
+    pub fn new_sub_chunk(xyz: Vec3<i32>, dim: Dimension) -> Self {
         Self {
-            xz,
+            xz: (xyz.x, xyz.z).into(),
             dim,
             key_type: KeyTypeTag::SubChunkPrefix,
-            y_index: Some(y_index),
+            y_index: Some(xyz.y as i8),
         }
     }
 

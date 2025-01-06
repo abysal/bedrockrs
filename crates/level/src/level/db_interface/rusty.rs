@@ -10,7 +10,6 @@ use rusty_leveldb::compressor::NoneCompressor;
 use rusty_leveldb::{Compressor, CompressorList, LdbIterator, Options, Status, WriteBatch, DB};
 use std::collections::HashSet;
 use std::io::Cursor;
-use std::marker::PhantomData;
 use std::path::Path;
 use std::rc::Rc;
 use thiserror::Error;
@@ -71,9 +70,8 @@ pub fn mcpe_options(compression_level: u8) -> Options {
 }
 const COMPRESSION_LEVEL: u8 = CompressionLevel::DefaultLevel as u8;
 
-pub struct RustyDBInterface<UserState> {
+pub struct RustyDBInterface {
     db: DB,
-    phantom_data: PhantomData<UserState>,
 }
 
 #[derive(Debug, Error)]
@@ -82,9 +80,9 @@ pub enum DBError {
     DatabaseError(#[from] Status),
 }
 
-impl<UserState> RustyDBInterface<UserState> {
-    fn build_key_batch(subchunk_batch_info: Vec<ChunkKey>, data: &mut Vec<u8>) -> WriteBatch {
-        let count = subchunk_batch_info
+impl RustyDBInterface {
+    fn build_key_batch(sub_chunk_batch_info: Vec<ChunkKey>, data: &mut Vec<u8>) -> WriteBatch {
+        let count = sub_chunk_batch_info
             .iter()
             .map(|ele| ele.estimate_size())
             .sum();
@@ -94,7 +92,7 @@ impl<UserState> RustyDBInterface<UserState> {
 
         let mut batch = WriteBatch::default();
 
-        for key in subchunk_batch_info {
+        for key in sub_chunk_batch_info {
             let start = buff.position();
 
             key.write_key(&mut buff);
@@ -113,58 +111,64 @@ impl<UserState> RustyDBInterface<UserState> {
     }
 }
 
-impl<T> Drop for RustyDBInterface<T> {
+impl Drop for RustyDBInterface {
     fn drop(&mut self) {
         self.db.close().unwrap();
     }
 }
 
-impl<UserState> RawWorldTrait for RustyDBInterface<UserState> {
+impl RawWorldTrait for RustyDBInterface {
     type Err = DBError;
-    type UserState = UserState;
+    type ConstructionInformation = ();
+
+    fn open(
+        path: Box<Path>,
+        create_if_missing: bool,
+        _: &mut Self::ConstructionInformation,
+    ) -> Result<Self, Self::Err> {
+        let mut opts = mcpe_options(COMPRESSION_LEVEL);
+        opts.create_if_missing = create_if_missing;
+        let db = DB::open(path, opts)?;
+        Ok(Self { db })
+    }
+
+    fn close(&mut self) -> Result<(), Self::Err> {
+        self.db.close()?;
+        Ok(())
+    }
 
     fn write_bytes_to_key(
         &mut self,
         chunk_info: ChunkKey,
         chunk_bytes: &[u8],
-        _: &mut Self::UserState,
     ) -> Result<(), Self::Err> {
         let mut batch = WriteBatch::default();
         batch.put(&Self::build_key(&chunk_info), chunk_bytes);
         Ok(self.db.write(batch, false)?)
     }
 
-    fn get_bytes_from_key(
-        &mut self,
-        chunk_info: ChunkKey,
-        _: &mut Self::UserState,
-    ) -> Result<Option<Vec<u8>>, Self::Err> {
+    fn get_bytes_from_key(&mut self, chunk_info: ChunkKey) -> Result<Option<Vec<u8>>, Self::Err> {
         Ok(self.db.get(&Self::build_key(&chunk_info)))
     }
 
-    fn delete_bytes_at_key(
-        &mut self,
-        chunk_info: ChunkKey,
-        _: &mut Self::UserState,
-    ) -> Result<(), Self::Err> {
+    fn delete_bytes_at_key(&mut self, chunk_info: ChunkKey) -> Result<(), Self::Err> {
         Ok(self.db.delete(&Self::build_key(&chunk_info))?)
     }
 
-    fn write_subchunk_batch(
+    fn write_sub_chunk_batch(
         &mut self,
-        subchunk_batch_info: Vec<(ChunkKey, Vec<u8>)>,
-        _: &mut Self::UserState,
+        sub_chunk_batch_info: Vec<(ChunkKey, Vec<u8>)>,
     ) -> Result<(), Self::Err> {
         let mut data: Vec<u8> = vec![
             0;
-            subchunk_batch_info
+            sub_chunk_batch_info
                 .iter()
                 .map(|(info, _)| info.estimate_size())
                 .sum()
         ];
         let mut buff: Cursor<&mut [u8]> = Cursor::new(&mut data);
         let mut batch = WriteBatch::default();
-        for (key, _) in &subchunk_batch_info {
+        for (key, _) in &sub_chunk_batch_info {
             let start = buff.position();
 
             key.write_key(&mut buff);
@@ -178,13 +182,12 @@ impl<UserState> RawWorldTrait for RustyDBInterface<UserState> {
         Ok(self.db.write(batch, false)?)
     }
 
-    fn write_subchunk_marker_batch(
+    fn write_sub_chunk_marker_batch(
         &mut self,
-        subchunk_batch_info: Vec<ChunkKey>,
-        _: &mut Self::UserState,
+        sub_chunk_batch_info: Vec<ChunkKey>,
     ) -> Result<(), Self::Err> {
         let mut data: Vec<u8> = Vec::new();
-        let batch = Self::build_key_batch(subchunk_batch_info, &mut data);
+        let batch = Self::build_key_batch(sub_chunk_batch_info, &mut data);
         Ok(self.db.write(batch, false)?)
     }
 
@@ -195,29 +198,7 @@ impl<UserState> RawWorldTrait for RustyDBInterface<UserState> {
         key_bytes
     }
 
-    fn new(
-        path: Box<Path>,
-        create_if_missing: bool,
-        _: &mut Self::UserState,
-    ) -> Result<Self, Self::Err> {
-        let mut opts = mcpe_options(COMPRESSION_LEVEL);
-        opts.create_if_missing = create_if_missing;
-        let db = DB::open(path, opts)?;
-        Ok(Self {
-            db,
-            phantom_data: PhantomData,
-        })
-    }
-
-    fn close(&mut self) -> Result<(), Self::Err> {
-        self.db.close()?;
-        Ok(())
-    }
-
-    fn generated_chunks(
-        &mut self,
-        _: &mut Self::UserState,
-    ) -> Result<HashSet<(Dimension, Vec2<i32>)>, Self::Err> {
+    fn generated_chunks(&mut self) -> Result<HashSet<(Dimension, Vec2<i32>)>, Self::Err> {
         let mut out_set = HashSet::new();
 
         let mut iter = self.db.new_iter()?;
