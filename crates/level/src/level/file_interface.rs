@@ -42,6 +42,8 @@ pub trait RawWorldTrait: Sized {
 
     fn close(&mut self) -> Result<(), Self::Err>;
 
+    fn flush(&mut self) -> Result<(), Self::Err>;
+
     fn write_bytes_to_key(
         &mut self,
         chunk_info: ChunkKey,

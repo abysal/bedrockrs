@@ -16,7 +16,7 @@ pub enum SubChunkSerDeError<WorldError: Debug, SerDeError: Debug> {
 }
 
 #[derive(Error, Debug)]
-pub enum SubChunkReadWriteError<WorldError: Debug, SerDeError: Debug, TranslationError: Debug> {
+pub enum WholeLevelError<WorldError: Debug, SerDeError: Debug, TranslationError: Debug> {
     #[error(transparent)]
     TranslationError(TranslationError),
     #[error(transparent)]
@@ -28,7 +28,12 @@ pub enum SubChunkReadWriteError<WorldError: Debug, SerDeError: Debug, Translatio
 }
 
 #[derive(Error, Debug)]
-pub enum LevelFilLError<WorldError: Debug, Decode: Debug, Encode: Debug, TranslationError: Debug> {
+pub enum WorldPipelineError<
+    WorldError: Debug,
+    Decode: Debug,
+    Encode: Debug,
+    TranslationError: Debug,
+> {
     #[error(transparent)]
     TranslationError(TranslationError),
     #[error(transparent)]
@@ -42,39 +47,35 @@ pub enum LevelFilLError<WorldError: Debug, Decode: Debug, Encode: Debug, Transla
 }
 
 impl<WorldError: Debug, Decode: Debug, Encode: Debug, TranslationError: Debug>
-    LevelFilLError<WorldError, Decode, Encode, TranslationError>
+    WorldPipelineError<WorldError, Decode, Encode, TranslationError>
 {
-    pub fn from_decode(
-        other: SubChunkReadWriteError<WorldError, Decode, TranslationError>,
-    ) -> Self {
+    pub fn from_decode(other: WholeLevelError<WorldError, Decode, TranslationError>) -> Self {
         match other {
-            SubChunkReadWriteError::TranslationError(r) => Self::TranslationError(r),
-            SubChunkReadWriteError::WorldError(r) => Self::WorldError(r),
-            SubChunkReadWriteError::SerDeError(r) => Self::DecodeError(r),
-            SubChunkReadWriteError::SubChunkError(r) => Self::SubChunkError(r),
+            WholeLevelError::TranslationError(r) => Self::TranslationError(r),
+            WholeLevelError::WorldError(r) => Self::WorldError(r),
+            WholeLevelError::SerDeError(r) => Self::DecodeError(r),
+            WholeLevelError::SubChunkError(r) => Self::SubChunkError(r),
         }
     }
 
-    pub fn from_encode(
-        other: SubChunkReadWriteError<WorldError, Encode, TranslationError>,
-    ) -> Self {
+    pub fn from_encode(other: WholeLevelError<WorldError, Encode, TranslationError>) -> Self {
         match other {
-            SubChunkReadWriteError::TranslationError(r) => Self::TranslationError(r),
-            SubChunkReadWriteError::WorldError(r) => Self::WorldError(r),
-            SubChunkReadWriteError::SerDeError(r) => Self::EncoderError(r),
-            SubChunkReadWriteError::SubChunkError(r) => Self::SubChunkError(r),
+            WholeLevelError::TranslationError(r) => Self::TranslationError(r),
+            WholeLevelError::WorldError(r) => Self::WorldError(r),
+            WholeLevelError::SerDeError(r) => Self::EncoderError(r),
+            WholeLevelError::SubChunkError(r) => Self::SubChunkError(r),
         }
     }
 }
 
 impl<WorldError: Debug, SerDeError: Debug, TranslationError: Debug>
     From<SubChunkSerDeError<WorldError, SerDeError>>
-    for SubChunkReadWriteError<WorldError, SerDeError, TranslationError>
+    for WholeLevelError<WorldError, SerDeError, TranslationError>
 {
     fn from(value: SubChunkSerDeError<WorldError, SerDeError>) -> Self {
         match value {
-            SubChunkSerDeError::WorldError(e) => SubChunkReadWriteError::WorldError(e),
-            SubChunkSerDeError::SerDeError(e) => SubChunkReadWriteError::SerDeError(e),
+            SubChunkSerDeError::WorldError(e) => WholeLevelError::WorldError(e),
+            SubChunkSerDeError::SerDeError(e) => WholeLevelError::SerDeError(e),
         }
     }
 }

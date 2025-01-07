@@ -7,10 +7,10 @@ use vek::{Vec2, Vec3};
 
 #[derive(Debug)]
 pub struct ChunkKey {
-    xz: Vec2<i32>,
-    dim: Dimension,
-    key_type: KeyTypeTag,
-    y_index: Option<i8>,
+    pub xz: Vec2<i32>,
+    pub dim: Dimension,
+    pub key_type: KeyTypeTag,
+    pub y_index: Option<i8>,
 }
 
 impl ChunkKey {

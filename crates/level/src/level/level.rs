@@ -10,6 +10,7 @@ use std::collections::hash_set::Iter;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use vek::{Vec2, Vec3};
 
 /// This is used when filtering chunks.
@@ -145,7 +146,7 @@ where
         config: FillConfig<BlockType>,
     ) -> Result<
         (),
-        LevelFilLError<
+        WorldPipelineError<
             UserWorldInterface::Err,
             <SubChunkSerDe as SubChunkDecoder>::Err,
             <SubChunkSerDe as SubChunkEncoder>::Err,
@@ -165,7 +166,7 @@ where
         encoder: &mut Encoder,
     ) -> Result<
         (),
-        LevelFilLError<
+        WorldPipelineError<
             UserWorldInterface::Err,
             Decoder::Err,
             Encoder::Err,
@@ -184,11 +185,9 @@ where
 
         let block = config.block.into_transition();
 
-        println!("{min} {max}");
         for x in min.x..=max.x {
             for z in min.z..=max.z {
                 for y in min.y..=max.y {
-                    println!("{x} {y} {z}");
                     if in_range(min.x, max.x, x)
                         && in_range(min.y, max.y, y)
                         && in_range(min.z, max.z, z)
@@ -200,10 +199,9 @@ where
                             SubChunkTransition::full(pos, config.data_version, block.clone());
 
                         self.set_sub_chunk_raw(encoder, data, pos, config.dim)
-                            .map_err(|err| LevelFilLError::from_encode(err.into()))?;
+                            .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
                     } else {
                         // Now we need to find where this sub chunk lies in the boundary
-                        println!("Called");
 
                         let invert_x = x == max.x;
                         let invert_y = y == max.y;
@@ -236,7 +234,7 @@ where
                                 config.dim,
                                 decoder,
                             )
-                            .map_err(|err| LevelFilLError::from_decode(err.into()))?
+                            .map_err(|err| WorldPipelineError::from_decode(err.into()))?
                             .map(|transition| {
                                 SubChunk::decode_from_transition(transition, config.dim, &mut ())
                                     .unwrap() // This is a safe unwrap because `SubChunk::decode_from_translation` never fails
@@ -251,15 +249,14 @@ where
                             for z in z_range.clone() {
                                 for y in y_range.clone() {
                                     data.set_block((x, y, z).into(), block.clone())
-                                        .map_err(|err| LevelFilLError::SubChunkError(err))?;
+                                        .map_err(|err| WorldPipelineError::SubChunkError(err))?;
                                 }
                             }
                         }
 
                         let translation = data.to_transition(&mut ()).unwrap(); // Safe because this can't fail
-                        dbg!(&translation);
                         self.set_sub_chunk_raw(encoder, translation, (x, y, z).into(), config.dim)
-                            .map_err(|err| LevelFilLError::from_encode(err.into()))?;
+                            .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
                     }
                 }
             }
@@ -280,7 +277,7 @@ where
         config: GetBlockConfig,
     ) -> Result<
         Option<BlockType>,
-        SubChunkReadWriteError<
+        WholeLevelError<
             UserWorldInterface::Err,
             <SubChunkSerDe as SubChunkEncoder>::Err,
             <SubChunk as SubChunkTrait>::Err,
@@ -310,11 +307,7 @@ where
         decoder: &mut Decoder,
     ) -> Result<
         Option<BlockType>,
-        SubChunkReadWriteError<
-            UserWorldInterface::Err,
-            Decoder::Err,
-            <SubChunk as SubChunkTrait>::Err,
-        >,
+        WholeLevelError<UserWorldInterface::Err, Decoder::Err, <SubChunk as SubChunkTrait>::Err>,
     >
     where
         Decoder::Err: Debug,
@@ -359,8 +352,9 @@ where
         config: SetBlockConfig<BlockType>,
     ) -> Result<
         (),
-        SubChunkReadWriteError<
+        WorldPipelineError<
             UserWorldInterface::Err,
+            <SubChunkSerDe as SubChunkDecoder>::Err,
             <SubChunkSerDe as SubChunkEncoder>::Err,
             <SubChunk as SubChunkTrait>::Err,
         >,
@@ -397,8 +391,9 @@ where
         encoder: &mut Encoder,
     ) -> Result<
         (),
-        SubChunkReadWriteError<
+        WorldPipelineError<
             UserWorldInterface::Err,
+            Decoder::Err,
             Encoder::Err,
             <SubChunk as SubChunkTrait>::Err,
         >,
@@ -408,12 +403,15 @@ where
         Encoder::Err: Debug,
     {
         let (sub_chunk_pos, local_pos) = LevelBlock::block_pos_to_sub_chunk(pos);
-
-        let mut data = if let Ok(Some(data)) = self.get_sub_chunk::<SubChunk, Decoder>(
-            sub_chunk_pos,
-            dim,
-            SerDeStoreRef::new(decoder, &mut ()),
-        ) {
+        println!("{}, {local_pos}", sub_chunk_pos);
+        let mut data = if let Some(data) = self
+            .get_sub_chunk::<SubChunk, Decoder>(
+                sub_chunk_pos,
+                dim,
+                SerDeStoreRef::new(decoder, &mut ()),
+            )
+            .map_err(|e| WorldPipelineError::from_decode(e))?
+        {
             data
         } else {
             let mut out = SubChunk::empty(sub_chunk_pos, dim);
@@ -431,6 +429,7 @@ where
         data.set_block(local_pos, block.into_transition())?;
 
         self.set_sub_chunk::<SubChunk, Encoder>(&data, SerDeStoreRef::new(encoder, &mut ()))
+            .map_err(|e| WorldPipelineError::from_encode(e))
     }
 
     /// High level function to fetch a sub chunk that contains a specific block.
@@ -442,7 +441,7 @@ where
         config: impl SerDeTrait<SerDe = Decoder, Info = SubChunkType::TransitionInformation>,
     ) -> Result<
         Option<SubChunkType>,
-        SubChunkReadWriteError<UserWorldInterface::Err, Decoder::Err, SubChunkType::Err>,
+        WholeLevelError<UserWorldInterface::Err, Decoder::Err, SubChunkType::Err>,
     >
     where
         Decoder::Err: Debug,
@@ -461,7 +460,7 @@ where
         mut config: impl SerDeTrait<SerDe = Decoder, Info = SubChunkType::TransitionInformation>,
     ) -> Result<
         Option<SubChunkType>,
-        SubChunkReadWriteError<UserWorldInterface::Err, Decoder::Err, SubChunkType::Err>,
+        WholeLevelError<UserWorldInterface::Err, Decoder::Err, SubChunkType::Err>,
     >
     where
         Decoder::Err: Debug,
@@ -476,7 +475,7 @@ where
 
         Ok(Some(
             SubChunkType::decode_from_transition(ser, dim, config.info())
-                .map_err(|ele| SubChunkReadWriteError::TranslationError(ele))?,
+                .map_err(|ele| WholeLevelError::TranslationError(ele))?,
         ))
     }
     pub fn get_sub_chunk_raw<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
@@ -488,6 +487,7 @@ where
     where
         Decoder::Err: Debug,
     {
+        println!("Reading from {pos} and dim {dim:?}");
         let bytes = self
             .db
             .get_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim))
@@ -497,6 +497,17 @@ where
             None => return Ok(None),
             Some(e) => e,
         };
+
+        dump_u8_array_to_file(
+            format!(
+                "{}_{:?}.bin",
+                pos,
+                SystemTime::from(UNIX_EPOCH).elapsed().unwrap().as_nanos()
+            )
+            .as_str(),
+            &bytes,
+        )
+        .unwrap();
 
         Ok(Some(
             decoder
@@ -520,11 +531,7 @@ where
         >,
     ) -> Result<
         (),
-        SubChunkReadWriteError<
-            UserWorldInterface::Err,
-            SubChunkEncoderType::Err,
-            SubChunkType::Err,
-        >,
+        WholeLevelError<UserWorldInterface::Err, SubChunkEncoderType::Err, SubChunkType::Err>,
     >
     where
         SubChunkEncoderType::Err: Debug,
@@ -555,11 +562,7 @@ where
         dim: Dimension,
     ) -> Result<
         (),
-        SubChunkReadWriteError<
-            UserWorldInterface::Err,
-            SubChunkEncoderType::Err,
-            SubChunkType::Err,
-        >,
+        WholeLevelError<UserWorldInterface::Err, SubChunkEncoderType::Err, SubChunkType::Err>,
     >
     where
         SubChunkType::Err: Debug,
@@ -567,7 +570,7 @@ where
     {
         let intermediate = sub_chunk
             .to_transition(encode_data.info())
-            .map_err(|ele| SubChunkReadWriteError::TranslationError(ele))?;
+            .map_err(|ele| WholeLevelError::TranslationError(ele))?;
         Ok(self.set_sub_chunk_raw(encode_data.serde(), intermediate, pos, dim)?)
     }
 
@@ -591,6 +594,40 @@ where
         self.db
             .set_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim), &bytes)
             .map_err(|ele| SubChunkSerDeError::WorldError(ele))?;
+
+        let wrote = self
+            .db
+            .get_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim))
+            .unwrap();
+
+        if let Some(wrote) = wrote {
+            assert_eq!(wrote, bytes);
+
+            let sub_chunk_data = SubChunkSerDe::decode_bytes_as_sub_chunk(
+                &mut SubChunkSerDe,
+                &mut std::io::Cursor::new(wrote.clone()),
+                (pos.x, pos.z).into(),
+            )
+            .unwrap();
+
+            let sub_chunk = SubChunk::decode_from_transition(sub_chunk_data, dim, &mut ()).unwrap();
+            println!("{sub_chunk:?}");
+
+            println!("{:?}", wrote.len());
+
+            dump_u8_array_to_file(
+                format!(
+                    "write_{}_{:?}.bin",
+                    pos,
+                    SystemTime::from(UNIX_EPOCH).elapsed().unwrap().as_nanos()
+                )
+                .as_str(),
+                &wrote,
+            )
+            .unwrap();
+        } else {
+            panic!("No data returned from key which was just wrote");
+        }
 
         self.handle_exist((pos.x, pos.z).into(), dim);
         Ok(())
@@ -674,9 +711,14 @@ where
             .collect()
     }
 
+    pub fn flush(&mut self) -> Result<(), UserWorldInterface::Err> {
+        self.flush_existence_buffer()?;
+        self.db.flush()
+    }
+
     // Internal functions which mainly handle DB layer interactions
     fn close_internal(&mut self) -> Result<(), UserWorldInterface::Err> {
-        self.flush_existence_buffer()?;
+        self.flush()?;
 
         // Must come after all the other closing steps
         self.db.close()
@@ -716,7 +758,7 @@ pub mod default_impl {
     pub type BedrockLevel = Level<LevelDbInterface>;
 }
 
-use crate::level::error::{LevelFilLError, SubChunkReadWriteError, SubChunkSerDeError};
-use crate::utility::miner::{bounds_left_optimized, in_range};
+use crate::level::error::{SubChunkSerDeError, WholeLevelError, WorldPipelineError};
+use crate::utility::miner::{bounds_left_optimized, dump_u8_array_to_file, in_range};
 #[cfg(feature = "default-impl")]
 pub use default_impl::*;

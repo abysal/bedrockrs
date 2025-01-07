@@ -1,6 +1,7 @@
 use crate::level::db_interface::bedrock_key::ChunkKey;
 use crate::level::db_interface::db::LevelDBKey;
 use crate::level::db_interface::key_level::KeyTypeTag;
+use crate::level::db_interface::key_level::KeyTypeTag::SubChunkPrefix;
 use crate::level::file_interface::RawWorldTrait;
 use bedrockrs_shared::world::dimension::Dimension;
 use byteorder::{LittleEndian, ReadBytesExt};
@@ -71,7 +72,7 @@ pub fn mcpe_options(compression_level: u8) -> Options {
 const COMPRESSION_LEVEL: u8 = CompressionLevel::DefaultLevel as u8;
 
 pub struct RustyDBInterface {
-    db: DB,
+    pub db: DB,
 }
 
 #[derive(Debug, Error)]
@@ -137,6 +138,10 @@ impl RawWorldTrait for RustyDBInterface {
         Ok(())
     }
 
+    fn flush(&mut self) -> Result<(), Self::Err> {
+        self.db.flush().map_err(|ele| Self::Err::DatabaseError(ele))
+    }
+
     fn write_bytes_to_key(
         &mut self,
         chunk_info: ChunkKey,
@@ -153,6 +158,15 @@ impl RawWorldTrait for RustyDBInterface {
 
     fn delete_bytes_at_key(&mut self, chunk_info: ChunkKey) -> Result<(), Self::Err> {
         Ok(self.db.delete(&Self::build_key(&chunk_info))?)
+    }
+
+    fn set_sub_chunk_raw(
+        &mut self,
+        chunk_info: ChunkKey,
+        chunk_bytes: &[u8],
+    ) -> Result<(), Self::Err> {
+        println!("{:?}, {chunk_info:?}", Self::build_key(&chunk_info));
+        self.write_bytes_to_key(chunk_info, chunk_bytes)
     }
 
     fn write_sub_chunk_batch(
@@ -195,6 +209,11 @@ impl RawWorldTrait for RustyDBInterface {
         let mut key_bytes: Vec<u8> = vec![0; key.estimate_size()];
         let mut buff: Cursor<&mut [u8]> = Cursor::new(&mut key_bytes);
         key.write_key(&mut buff);
+
+        if key.key_type == SubChunkPrefix {
+            println!("{:?}", buff);
+        }
+
         key_bytes
     }
 

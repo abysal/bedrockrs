@@ -1,14 +1,24 @@
 use std::cmp::{max, min};
+use std::io;
+use std::io::Write;
 use vek::Vec3;
 
-pub fn idx_3_to_1<T: Clone + Copy + Into<usize>>(vec: Vec3<T>, height: T, depth: T) -> usize
+pub fn idx_3_to_1<T: Clone + Copy + Into<usize> + vek::num_traits::AsPrimitive<usize>>(
+    vec: Vec3<T>,
+    height: T,
+    depth: T,
+) -> usize
 where
     usize: From<T>,
 {
-    (usize::from(vec.x) * usize::from(depth) * usize::from(height)
-        + usize::from(vec.z) * usize::from(height)
-        + usize::from(vec.y))
-    .into()
+    let vec = vec.as_::<usize>();
+    let x = vec.x;
+    let y = vec.y;
+    let z = vec.z;
+    let height = usize::from(height);
+    let depth = usize::from(depth);
+
+    x * depth * height + z * height + y
 }
 /// Checks EXCLUSIVELY if something is in range
 pub fn in_range<T: PartialOrd>(min: T, max: T, val: T) -> bool {
@@ -47,4 +57,16 @@ mod test {
             (Vec3::new(5, -3, -3), Vec3::new(10, 5, 5))
         );
     }
+}
+
+pub fn dump_u8_array_to_file(file_name: &str, data: &[u8]) -> io::Result<()> {
+    return Ok(());
+    // Create or open the file
+    let mut file = std::fs::File::create(file_name)?;
+
+    // Write the u8 array to the file
+    file.write_all(data)?;
+
+    println!("Data successfully written to {}", file_name);
+    Ok(())
 }

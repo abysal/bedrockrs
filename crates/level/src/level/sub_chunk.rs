@@ -473,8 +473,11 @@ impl SubChunkTrait for SubChunk {
                 ));
             }
         }
+
+        let layers = unsafe { std::mem::transmute(layers) };
+
         Ok(Self {
-            blocks: unsafe { std::mem::transmute(layers) },
+            blocks: layers,
             position: data.position,
             dimension,
             active_layer: 0,
