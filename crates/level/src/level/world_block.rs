@@ -43,22 +43,24 @@ impl LevelBlock {
     }
 
     pub fn block_pos_to_sub_chunk(pos: Vec3<i32>) -> (Vec3<i32>, Vec3<u8>) {
-        let sub_chunk_y = (pos.y as f32 / 16f32).floor() as i8;
-        let sub_chunk_y_inside = Self::interior_position(pos.y);
+        let sub_chunk_y = pos.y >> 4;
+        let sub_chunk_y_inside = pos.y & 0xF;
 
         let chunk_xz = Vec2::new(
-            (pos.x as f32 / 16f32).floor() as i32,
-            (pos.z as f32 / 16f32).floor() as i32,
+            (pos.x >> 4),
+            (pos.z >> 4), // Stolen from the game
         );
 
-        let sub_chunk_xz = Vec2::new(
-            Self::interior_position(pos.x),
-            Self::interior_position(pos.z),
-        );
+        let sub_chunk_xz = Vec2::new(pos.x & 0xF, pos.z & 0xF);
 
         (
-            (chunk_xz.x, sub_chunk_y as i32, chunk_xz.y).into(),
-            (sub_chunk_xz.x, sub_chunk_y_inside, sub_chunk_xz.y).into(),
+            (chunk_xz.x, sub_chunk_y, chunk_xz.y).into(),
+            (
+                sub_chunk_xz.x as u8,
+                sub_chunk_y_inside as u8,
+                sub_chunk_xz.y as u8,
+            )
+                .into(),
         )
     }
 
@@ -119,6 +121,10 @@ mod test {
         assert_eq!(
             LevelBlock::block_pos_to_sub_chunk((0, -3, 0).into()),
             ((0, -1, 0).into(), (0, 13, 0).into())
+        );
+        assert_eq!(
+            LevelBlock::block_pos_to_sub_chunk((16, -16, 16).into()),
+            ((1, -1, 1).into(), (0, 0, 0).into())
         );
     }
 }

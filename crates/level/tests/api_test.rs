@@ -28,7 +28,7 @@ fn dump_keys(level: &mut BedrockLevel) {
 
     println!("dump start");
     while let Some((k, v)) = iter.next() {
-        println!("{:?}", k);
+        println!("{:?} {}", k, v.len());
     }
     println!("dump end");
 }
@@ -54,7 +54,7 @@ fn world_test() -> Result<(), anyhow::Error> {
     //     .expect("TODO: panic message");
     // level.flush()?;
     // drop(level);
-
+    level.clear(Dimension::Overworld)?;
     level
         .set_block(SetBlockConfig {
             position: (0, 10, 0).into(),
@@ -63,14 +63,17 @@ fn world_test() -> Result<(), anyhow::Error> {
             layer: 0,
         })
         .expect("Cant Fail");
-    // level
-    //     .set_block(SetBlockConfig {
-    //         position: (0, -3, 0).into(),
-    //         block: block.clone(),
-    //         dim: Dimension::Overworld,
-    //         layer: 0,
-    //     })
-    //     .expect("Cant Fail");
+
+    for y in -16..=16 {
+        level
+            .set_block(SetBlockConfig {
+                position: (0, y, 0).into(),
+                block: block.clone(),
+                dim: Dimension::Overworld,
+                layer: 0,
+            })
+            .expect("Cant Fail");
+    }
 
     // println!(
     //     "{:?}",
@@ -84,8 +87,29 @@ fn world_test() -> Result<(), anyhow::Error> {
     // );
     // level.close()?;
 
+    dump_keys(&mut level);
+    level.close()?;
+    let mut level = BedrockLevel::open(
+        Box::from(Path::new("./test_level_temp")),
+        LevelConfiguration::default(),
+        &mut (),
+    )?;
+
+    for y in -16..=16 {
+        println!(
+            "{:?}",
+            level
+                .get_block::<LevelBlock>(GetBlockConfig {
+                    position: (0, y, 0).into(),
+                    dim: Dimension::Overworld,
+                    layer: 0,
+                })
+                .expect("Cant Fail")
+        );
+    }
     level.flush()?;
     dump_keys(&mut level);
+
     // let mut level = get_level_with_copy()?;
     //
     // println!(
@@ -93,16 +117,6 @@ fn world_test() -> Result<(), anyhow::Error> {
     //     level
     //         .get_block::<LevelBlock>(GetBlockConfig {
     //             position: (0, 13, 0).into(),
-    //             dim: Dimension::Overworld,
-    //             layer: 0,
-    //         })
-    //         .unwrap()
-    // );
-    // println!(
-    //     "{:?}",
-    //     level
-    //         .get_block::<LevelBlock>(GetBlockConfig {
-    //             position: (0, -3, 0).into(),
     //             dim: Dimension::Overworld,
     //             layer: 0,
     //         })
