@@ -403,7 +403,6 @@ where
         Encoder::Err: Debug,
     {
         let (sub_chunk_pos, local_pos) = LevelBlock::block_pos_to_sub_chunk(pos);
-        println!("{}, {local_pos}", sub_chunk_pos);
         let mut data = if let Some(data) = self
             .get_sub_chunk::<SubChunk, Decoder>(
                 sub_chunk_pos,
@@ -487,7 +486,6 @@ where
     where
         Decoder::Err: Debug,
     {
-        println!("Reading from {pos} and dim {dim:?}");
         let bytes = self
             .db
             .get_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim))
@@ -611,9 +609,6 @@ where
             .unwrap();
 
             let sub_chunk = SubChunk::decode_from_transition(sub_chunk_data, dim, &mut ()).unwrap();
-            println!("{sub_chunk:?}");
-
-            println!("{:?}", wrote.len());
 
             dump_u8_array_to_file(
                 format!(

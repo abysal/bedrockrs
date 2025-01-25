@@ -165,7 +165,6 @@ impl RawWorldTrait for RustyDBInterface {
         chunk_info: ChunkKey,
         chunk_bytes: &[u8],
     ) -> Result<(), Self::Err> {
-        println!("{:?}, {chunk_info:?}", Self::build_key(&chunk_info));
         self.write_bytes_to_key(chunk_info, chunk_bytes)
     }
 
@@ -209,10 +208,6 @@ impl RawWorldTrait for RustyDBInterface {
         let mut key_bytes: Vec<u8> = vec![0; key.estimate_size()];
         let mut buff: Cursor<&mut [u8]> = Cursor::new(&mut key_bytes);
         key.write_key(&mut buff);
-
-        if key.key_type == SubChunkPrefix {
-            println!("{:?}", buff);
-        }
 
         key_bytes
     }
