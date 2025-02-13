@@ -58,15 +58,3 @@ mod test {
         );
     }
 }
-
-pub fn dump_u8_array_to_file(file_name: &str, data: &[u8]) -> io::Result<()> {
-    return Ok(());
-    // Create or open the file
-    let mut file = std::fs::File::create(file_name)?;
-
-    // Write the u8 array to the file
-    file.write_all(data)?;
-
-    println!("Data successfully written to {}", file_name);
-    Ok(())
-}

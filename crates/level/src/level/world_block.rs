@@ -12,19 +12,12 @@ pub enum BlockStateValue {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct LevelBlock {
-    // If the name of anything in this struct changes the world ends
+    // If the name of anything in this struct changes, the world ends
     pub name: String,
     pub states: HashMap<String, BlockStateValue>,
-}
-
-pub trait BlockTransition: Clone + PartialEq<Self> {
-    fn from_transition(value: LevelBlock) -> Self;
-    fn into_transition(self) -> LevelBlock;
-
-    fn get_id(&self) -> &str;
-    fn from_other(other: &Self) -> Self {
-        other.clone()
-    }
+    #[serde(default)]
+    // Honestly? I haven't the faintest idea what this does
+    pub version: i32,
 }
 
 impl LevelBlock {
@@ -32,6 +25,7 @@ impl LevelBlock {
         Self {
             name: String::from("minecraft:air"),
             states: HashMap::new(),
+            version: 18163713,
         }
     }
 
@@ -39,6 +33,7 @@ impl LevelBlock {
         Self {
             name: id,
             states: HashMap::new(),
+            version: 18163713,
         }
     }
 
@@ -47,8 +42,8 @@ impl LevelBlock {
         let sub_chunk_y_inside = pos.y & 0xF;
 
         let chunk_xz = Vec2::new(
-            (pos.x >> 4),
-            (pos.z >> 4), // Stolen from the game
+            pos.x >> 4,
+            pos.z >> 4, // Stolen from the game
         );
 
         let sub_chunk_xz = Vec2::new(pos.x & 0xF, pos.z & 0xF);
@@ -80,21 +75,8 @@ impl<IdType: Into<String>, StateType: Into<HashMap<String, BlockStateValue>>>
         Self {
             name: id.into(),
             states: states.into(),
+            version: 18163713,
         }
-    }
-}
-
-impl BlockTransition for LevelBlock {
-    fn from_transition(value: LevelBlock) -> Self {
-        value
-    }
-
-    fn into_transition(self) -> LevelBlock {
-        self
-    }
-
-    fn get_id(&self) -> &str {
-        &self.name
     }
 }
 

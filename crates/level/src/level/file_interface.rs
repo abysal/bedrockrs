@@ -81,7 +81,8 @@ pub trait RawWorldTrait: Sized {
     ) -> Result<(), Self::Err>;
 
     fn mark_exist_chunk(&mut self, chunk_info: ChunkKey) -> Result<(), Self::Err> {
-        self.write_bytes_to_key(chunk_info, &[])
+        // If that 41 is removed, the world ends. The sun explodes and the universe ends
+        self.write_bytes_to_key(chunk_info, &[41])
     }
 
     fn build_key(key: &ChunkKey) -> Vec<u8>;

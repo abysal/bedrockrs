@@ -1,10 +1,10 @@
 use crate::level::db_interface::bedrock_key::ChunkKey;
 use crate::level::file_interface::RawWorldTrait;
 use crate::level::sub_chunk::{
-    SerDeStoreRef, SerDeTrait, SubChunk, SubChunkDecoder, SubChunkEncoder, SubChunkSerDe,
-    SubChunkTrait, SubChunkTraitExtended, SubChunkTransition,
+    SerDeStore, SerDeStoreRef, SerDeTrait, SubChunk, SubChunkDecoder, SubChunkDecoderError,
+    SubChunkEncoder, SubChunkSerDe, SubChunkTrait, SubChunkTraitExtended, SubChunkTransition,
 };
-use crate::level::world_block::{BlockTransition, LevelBlock};
+use crate::level::world_block::LevelBlock;
 use bedrockrs_shared::world::dimension::Dimension;
 use std::collections::hash_set::Iter;
 use std::collections::HashSet;
@@ -59,9 +59,9 @@ impl Default for LevelConfiguration {
 }
 
 #[derive(Debug)]
-pub struct SetBlockConfig<Block: BlockTransition> {
+pub struct SetBlockConfig {
     pub position: Vec3<i32>,
-    pub block: Block,
+    pub block: LevelBlock,
     pub dim: Dimension,
     pub layer: u8,
 }
@@ -74,10 +74,10 @@ pub struct GetBlockConfig {
 }
 
 #[derive(Debug)]
-pub struct FillConfig<Block: BlockTransition> {
+pub struct FillConfig {
     pub from: Vec3<i32>,
     pub to: Vec3<i32>,
-    pub block: Block,
+    pub block: LevelBlock,
     pub dim: Dimension,
     pub layer: u8,
     pub data_version: u8,
@@ -138,131 +138,135 @@ where
         &mut self.db
     }
 
-    /// Fills blocks into the world in the boundaries given.
-    /// This function works on a global scale meaning it works on/over sub chunk boundaries
-    /// This uses the default Encoders and Decoders. If custom ones are needed use [`Level::fill_ex`].
-    pub fn fill<BlockType: BlockTransition>(
-        &mut self,
-        config: FillConfig<BlockType>,
-    ) -> Result<
-        (),
-        WorldPipelineError<
-            UserWorldInterface::Err,
-            <SubChunkSerDe as SubChunkDecoder>::Err,
-            <SubChunkSerDe as SubChunkEncoder>::Err,
-            <SubChunk as SubChunkTrait>::Err,
-        >,
-    > {
-        self.fill_ex(config, &mut SubChunkSerDe, &mut SubChunkSerDe)
-    }
+    // Fills blocks into the world in the boundaries given.
+    // This function works on a global scale meaning it works on/over sub chunk boundaries
+    // This uses the default Encoders and Decoders. If custom ones are needed use [`Level::fill_ex`].
+    // pub fn fill(
+    //     &mut self,
+    //     config: FillConfig,
+    // ) -> Result<
+    //     (),
+    //     WorldPipelineError<
+    //         UserWorldInterface::Err,
+    //         <SubChunkSerDe as SubChunkDecoder>::Err,
+    //         <SubChunkSerDe as SubChunkEncoder>::Err,
+    //         <SubChunk as SubChunkTrait>::Err,
+    //     >,
+    // > {
+    //     self.fill_ex(config, &mut SubChunkSerDe, &mut SubChunkSerDe)
+    // }
 
-    /// Fills blocks into the world in the boundaries given.
-    /// This function works on a global scale meaning it works on/over sub chunk boundaries
-    /// This uses custom Encoders and Decoders
-    pub fn fill_ex<BlockType: BlockTransition, Decoder: SubChunkDecoder, Encoder: SubChunkEncoder>(
-        &mut self,
-        config: FillConfig<BlockType>,
-        decoder: &mut Decoder,
-        encoder: &mut Encoder,
-    ) -> Result<
-        (),
-        WorldPipelineError<
-            UserWorldInterface::Err,
-            Decoder::Err,
-            Encoder::Err,
-            <SubChunk as SubChunkTrait>::Err,
-        >,
-    >
-    where
-        Decoder::Err: Debug,
-        Encoder::Err: Debug,
-    {
-        // This gets the `to` and `from` into a state where `from` will always be the bottom left of the selection and `to` will be the top right
-        let (from, to) = bounds_left_optimized(config.to, config.from);
-
-        let (min, local_min) = LevelBlock::block_pos_to_sub_chunk(from);
-        let (max, local_max) = LevelBlock::block_pos_to_sub_chunk(to);
-
-        let block = config.block.into_transition();
-
-        for x in min.x..=max.x {
-            for z in min.z..=max.z {
-                for y in min.y..=max.y {
-                    if in_range(min.x, max.x, x)
-                        && in_range(min.y, max.y, y)
-                        && in_range(min.z, max.z, z)
-                    {
-                        // Since this whole sub chunk must be replaced we will just create a new one to cut down on the overhead of reading it
-                        let pos = (x, y, z).into();
-
-                        let data =
-                            SubChunkTransition::full(pos, config.data_version, block.clone());
-
-                        self.set_sub_chunk_raw(encoder, data, pos, config.dim)
-                            .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
-                    } else {
-                        // Now we need to find where this sub chunk lies in the boundary
-
-                        let invert_x = x == max.x;
-                        let invert_y = y == max.y;
-                        let invert_z = z == max.z;
-
-                        let x_range = if invert_x {
-                            0..=local_max.x
-                        } else {
-                            local_min.x..=15
-                        };
-
-                        let y_range = if invert_y {
-                            0..=local_max.y
-                        } else {
-                            local_min.y..=15
-                        };
-
-                        let z_range = if invert_z {
-                            0..=local_max.z
-                        } else {
-                            local_min.z..=15
-                        };
-
-                        // This is slightly convoluted to allow for fewer allocations,
-                        // by generating a sub chunk directly if it didn't exist in the database
-                        // [`Result::unwrap_or_else`] is used over [`Result::unwrap_or`] to bypass the overhead of creating the default even when it's not needed
-                        let mut data = self
-                            .get_sub_chunk_raw::<SubChunk, Decoder>(
-                                (x, y, z).into(),
-                                config.dim,
-                                decoder,
-                            )
-                            .map_err(|err| WorldPipelineError::from_decode(err.into()))?
-                            .map(|transition| {
-                                SubChunk::decode_from_transition(transition, config.dim, &mut ())
-                                    .unwrap() // This is a safe unwrap because `SubChunk::decode_from_translation` never fails
-                            })
-                            .unwrap_or_else(|| {
-                                {
-                                    SubChunk::empty((x, y, z).into(), config.dim).to_init()
-                                }
-                            });
-
-                        for x in x_range {
-                            for z in z_range.clone() {
-                                for y in y_range.clone() {
-                                    data.set_block((x, y, z).into(), block.clone())
-                                        .map_err(|err| WorldPipelineError::SubChunkError(err))?;
-                                }
-                            }
-                        }
-
-                        let translation = data.to_transition(&mut ()).unwrap(); // Safe because this can't fail
-                        self.set_sub_chunk_raw(encoder, translation, (x, y, z).into(), config.dim)
-                            .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
+    // Fills blocks into the world in the boundaries given.
+    // This function works on a global scale meaning it works on/over sub chunk boundaries
+    // This uses custom Encoders and Decoders
+    // pub fn fill_ex<Decoder: SubChunkDecoder, Encoder: SubChunkEncoder>(
+    //     &mut self,
+    //     config: FillConfig,
+    //     decoder: &mut Decoder,
+    //     encoder: &mut Encoder,
+    // ) -> Result<
+    //     (),
+    //     WorldPipelineError<
+    //         UserWorldInterface::Err,
+    //         Decoder::Err,
+    //         Encoder::Err,
+    //         <SubChunk as SubChunkTrait>::Err,
+    //     >,
+    // >
+    // where
+    //     Decoder::Err: Debug,
+    //     Encoder::Err: Debug,
+    // {
+    //     // This gets the `to` and `from` into a state where `from` will always be the bottom left of the selection and `to` will be the top right
+    //     let (from, to) = bounds_left_optimized(config.to, config.from);
+    //
+    //     let (min, local_min) = LevelBlock::block_pos_to_sub_chunk(from);
+    //     let (max, local_max) = LevelBlock::block_pos_to_sub_chunk(to);
+    //
+    //     let block = config.block;
+    //
+    //     for x in min.x..=max.x {
+    //         for z in min.z..=max.z {
+    //             for y in min.y..=max.y {
+    //                 if in_range(min.x, max.x, x)
+    //                     && in_range(min.y, max.y, y)
+    //                     && in_range(min.z, max.z, z)
+    //                 {
+    //                     // Since this whole sub chunk must be replaced,
+    //                     // we will just create a new one
+    //                     // to cut down on the overhead of reading it
+    //                     let pos = (x, y, z).into();
+    //
+    //                     let data =
+    //                         SubChunkTransition::full(pos, config.data_version, block.clone());
+    //
+    //                     self.set_sub_chunk_raw(encoder, data, pos, config.dim)
+    //                         .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
+    //                 } else {
+    //                     // Now we need to find where this sub chunk lies in the boundary
+    //
+    //                     let invert_x = x == max.x;
+    //                     let invert_y = y == max.y;
+    //                     let invert_z = z == max.z;
+    //
+    //                     let x_range = if invert_x {
+    //                         0..=local_max.x
+    //                     } else {
+    //                         local_min.x..=15
+    //                     };
+    //
+    //                     let y_range = if invert_y {
+    //                         local_min.y..=15
+    //                     } else {
+    //                         0..=local_max.y
+    //                     };
+    //
+    //                     let z_range = if invert_z {
+    //                         local_min.z..=15
+    //                     } else {
+    //                         0..=local_max.z
+    //                     };
+    //
+    //                     // This is slightly convoluted to allow for fewer allocations,
+    //                     // by generating a sub chunk directly if it didn't exist in the database
+    //                     // [`Result::unwrap_or_else`] is used over [`Result::unwrap_or`] to bypass the overhead of creating the default even when it's not needed
+    //                     let mut data = self
+    //                         .get_sub_chunk_raw::<SubChunk, Decoder>(
+    //                             (x, y, z).into(),
+    //                             config.dim,
+    //                             decoder,
+    //                         )
+    //                         .map_err(|err| WorldPipelineError::from_decode(err.into()))?
+    //                         .map(|transition| {
+    //                             SubChunk::decode_from_transition(transition, config.dim, &mut ())
+    //                                 .unwrap() // This is a safe call to unwrap
+    //                                           // because `SubChunk::decode_from_translation`
+    //                                           // never fails
+    //                         })
+    //                         .unwrap_or_else(|| {
+    //                             {
+    //                                 SubChunk::empty((x, y, z).into(), config.dim).to_init()
+    //                             }
+    //                         });
+    //
+    //                     for x in x_range {
+    //                         for z in z_range.clone() {
+    //                             for y in y_range.clone() {
+    //                                 data.set_block((x, y, z).into(), block.clone())
+    //                                     .map_err(|err| WorldPipelineError::SubChunkError(err))?;
+    //                             }
+    //                         }
+    //                     }
+    //
+    //                     let translation = data.to_transition().unwrap(); // Safe because this can't fail
+    //                     self.set_sub_chunk_raw(encoder, translation, (x, y, z).into(), config.dim)
+    //                         .map_err(|err| WorldPipelineError::from_encode(err.into()))?;
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     /// # Warning
     /// This function is incredibly expensive to call due to having to deserialize the sub chunk. Only call this for 1 off cases of getting blocks
@@ -272,18 +276,18 @@ where
     /// # Info
     /// This function uses the default decoder implementation.
     /// If a custom Decoder is needed please use [`Level::get_block_ex`].
-    pub fn get_block<BlockType: BlockTransition>(
+    pub fn get_block(
         &mut self,
         config: GetBlockConfig,
     ) -> Result<
-        Option<BlockType>,
+        Option<LevelBlock>,
         WholeLevelError<
             UserWorldInterface::Err,
             <SubChunkSerDe as SubChunkEncoder>::Err,
             <SubChunk as SubChunkTrait>::Err,
         >,
     > {
-        self.get_block_ex::<BlockType, SubChunkSerDe>(
+        self.get_block_ex::<SubChunkSerDe>(
             config.position,
             config.dim,
             config.layer,
@@ -299,14 +303,14 @@ where
     /// # Info
     /// This function uses a custom decoder.
     /// If a custom layer is not needed and default decoding is fine use [`Level::get_block`].
-    pub fn get_block_ex<BlockType: BlockTransition, Decoder: SubChunkDecoder>(
+    pub fn get_block_ex<Decoder: SubChunkDecoder>(
         &mut self,
         pos: Vec3<i32>,
         dim: Dimension,
         layer: u8,
         decoder: &mut Decoder,
     ) -> Result<
-        Option<BlockType>,
+        Option<LevelBlock>,
         WholeLevelError<UserWorldInterface::Err, Decoder::Err, <SubChunk as SubChunkTrait>::Err>,
     >
     where
@@ -314,7 +318,7 @@ where
     {
         let (sub_chunk_pos, local_pos) = LevelBlock::block_pos_to_sub_chunk(pos);
 
-        let data = if let Some(data) = self.get_sub_chunk::<SubChunk, Decoder>(
+        let data = if let Some(data) = self.get_sub_chunk_ex::<SubChunk, Decoder>(
             sub_chunk_pos,
             dim,
             SerDeStoreRef::new(decoder, &mut ()),
@@ -333,10 +337,7 @@ where
             out
         };
 
-        Ok(data
-            .get_block(local_pos)
-            .cloned()
-            .map(|ele| BlockType::from_transition(ele)))
+        Ok(data.get_block(local_pos).cloned())
     }
 
     /// # Warning
@@ -347,9 +348,9 @@ where
     /// # Info
     /// This function uses the default decoder and encoder implementations.
     /// If a custom Decoder or Encoder is needed please use [`Level::set_block_ex`].
-    pub fn set_block<BlockType: BlockTransition>(
+    pub fn set_block(
         &mut self,
-        config: SetBlockConfig<BlockType>,
+        config: SetBlockConfig,
     ) -> Result<
         (),
         WorldPipelineError<
@@ -359,7 +360,7 @@ where
             <SubChunk as SubChunkTrait>::Err,
         >,
     > {
-        self.set_block_ex::<BlockType, SubChunkSerDe, SubChunkSerDe>(
+        self.set_block_ex::<SubChunkSerDe, SubChunkSerDe>(
             config.block,
             config.position,
             config.dim,
@@ -377,13 +378,9 @@ where
     /// # Info
     /// This function uses a custom Encoder and Decoder.
     /// If a custom layer is not needed and default Encoding and Decoding is fine use [`Level::set_block`].
-    pub fn set_block_ex<
-        BlockType: BlockTransition,
-        Decoder: SubChunkDecoder,
-        Encoder: SubChunkEncoder,
-    >(
+    pub fn set_block_ex<Decoder: SubChunkDecoder, Encoder: SubChunkEncoder>(
         &mut self,
-        block: BlockType,
+        block: LevelBlock,
         pos: Vec3<i32>,
         dim: Dimension,
         layer: u8,
@@ -404,7 +401,7 @@ where
     {
         let (sub_chunk_pos, local_pos) = LevelBlock::block_pos_to_sub_chunk(pos);
         let mut data = if let Some(data) = self
-            .get_sub_chunk::<SubChunk, Decoder>(
+            .get_sub_chunk_ex::<SubChunk, Decoder>(
                 sub_chunk_pos,
                 dim,
                 SerDeStoreRef::new(decoder, &mut ()),
@@ -425,15 +422,40 @@ where
             out
         };
 
-        data.set_block(local_pos, block.into_transition())?;
+        data.set_block(local_pos, block)?;
 
-        self.set_sub_chunk::<SubChunk, Encoder>(&data, SerDeStoreRef::new(encoder, &mut ()))
-            .map_err(|e| WorldPipelineError::from_encode(e))
+        self.set_sub_chunk_ex::<SubChunk, Encoder>(
+            &data,
+            encoder,
+            data.position(),
+            data.dimension(),
+        )
+        .map_err(|e| WorldPipelineError::from_encode(e))
     }
 
     /// High level function to fetch a sub chunk that contains a specific block.
     /// If the sub chunk doesn't exist this will return None
-    pub fn get_sub_chunk_block_position<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
+    pub fn get_sub_chunk_block_position<SubChunkType: SubChunkTrait>(
+        &mut self,
+        pos: Vec3<i32>,
+        dim: Dimension,
+        config: impl SerDeTrait<SerDe = SubChunkSerDe, Info = SubChunkType::TransitionInformation>,
+    ) -> Result<
+        Option<SubChunkType>,
+        WholeLevelError<UserWorldInterface::Err, SubChunkDecoderError, SubChunkType::Err>,
+    >
+    where
+        SubChunkType::Err: Debug,
+    {
+        let (sub_chunk_pos, _) = LevelBlock::block_pos_to_sub_chunk(pos);
+        self.get_sub_chunk_block_position_ex::<SubChunkType, SubChunkSerDe>(
+            sub_chunk_pos,
+            dim,
+            config,
+        )
+    }
+
+    pub fn get_sub_chunk_block_position_ex<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
         &mut self,
         pos: Vec3<i32>,
         dim: Dimension,
@@ -447,12 +469,21 @@ where
         SubChunkType::Err: Debug,
     {
         let (sub_chunk_pos, _) = LevelBlock::block_pos_to_sub_chunk(pos);
-        self.get_sub_chunk::<SubChunkType, Decoder>(sub_chunk_pos, dim, config)
+        self.get_sub_chunk_ex::<SubChunkType, Decoder>(sub_chunk_pos, dim, config)
     }
 
     /// High level function to fetch a sub chunk directly from the database.
-    /// If the sub chunk doesn't exist this will return None
-    pub fn get_sub_chunk<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
+    /// If the sub chunk doesn't exist, this will return None
+    pub fn get_sub_chunk(
+        &mut self,
+        pos: Vec3<i32>,
+        dim: Dimension,
+    ) -> Result<Option<SubChunk>, WholeLevelError<UserWorldInterface::Err, SubChunkDecoderError, ()>>
+    {
+        self.get_sub_chunk_ex(pos, dim, SerDeStore::<SubChunkSerDe>::default())
+    }
+
+    pub fn get_sub_chunk_ex<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
         &mut self,
         pos: Vec3<i32>,
         dim: Dimension,
@@ -477,6 +508,7 @@ where
                 .map_err(|ele| WholeLevelError::TranslationError(ele))?,
         ))
     }
+
     pub fn get_sub_chunk_raw<SubChunkType: SubChunkTrait, Decoder: SubChunkDecoder>(
         &mut self,
         pos: Vec3<i32>,
@@ -496,17 +528,6 @@ where
             Some(e) => e,
         };
 
-        dump_u8_array_to_file(
-            format!(
-                "{}_{:?}.bin",
-                pos,
-                SystemTime::from(UNIX_EPOCH).elapsed().unwrap().as_nanos()
-            )
-            .as_str(),
-            &bytes,
-        )
-        .unwrap();
-
         Ok(Some(
             decoder
                 .decode_bytes_as_sub_chunk(&mut std::io::Cursor::new(bytes), (pos.x, pos.z).into())
@@ -516,28 +537,17 @@ where
 
     /// High level function to write a sub chunk directly into the database.
     /// Writes the sub chunk at its current dimension and position.
-    /// If a dimension or position override is required please call [`Level::set_sub_chunk_ex`]
-    pub fn set_sub_chunk<
-        SubChunkType: SubChunkTraitExtended,
-        SubChunkEncoderType: SubChunkEncoder,
-    >(
+    /// If a dimension or position override is required, please call [`Level::set_sub_chunk_ex`]
+    pub fn set_sub_chunk<SubChunkType: SubChunkTraitExtended>(
         &mut self,
         sub_chunk: &SubChunkType,
-        encode_data: impl SerDeTrait<
-            Info = SubChunkType::TransitionInformation,
-            SerDe = SubChunkEncoderType,
-        >,
-    ) -> Result<
-        (),
-        WholeLevelError<UserWorldInterface::Err, SubChunkEncoderType::Err, SubChunkType::Err>,
-    >
+    ) -> Result<(), WholeLevelError<UserWorldInterface::Err, SubChunkDecoderError, SubChunkType::Err>>
     where
-        SubChunkEncoderType::Err: Debug,
         SubChunkType::Err: Debug,
     {
         self.set_sub_chunk_ex(
             sub_chunk,
-            encode_data,
+            &mut SubChunkSerDe::default(),
             sub_chunk.position(),
             sub_chunk.dimension(),
         )
@@ -545,17 +555,14 @@ where
 
     /// Slightly lower level function to write a sub chunk directly into the database.
     /// Writes the sub chunk at the position and dimension provided.
-    /// If you do not need to override this please use [`Level::set_sub_chunk`] instead
+    /// If you do not need to override this, please use [`Level::set_sub_chunk`] instead
     pub fn set_sub_chunk_ex<
         SubChunkType: SubChunkTraitExtended,
         SubChunkEncoderType: SubChunkEncoder,
     >(
         &mut self,
         sub_chunk: &SubChunkType,
-        mut encode_data: impl SerDeTrait<
-            Info = SubChunkType::TransitionInformation,
-            SerDe = SubChunkEncoderType,
-        >,
+        encoder: &mut SubChunkEncoderType,
         pos: Vec3<i32>,
         dim: Dimension,
     ) -> Result<
@@ -567,9 +574,9 @@ where
         SubChunkEncoderType::Err: Debug,
     {
         let intermediate = sub_chunk
-            .to_transition(encode_data.info())
+            .to_transition()
             .map_err(|ele| WholeLevelError::TranslationError(ele))?;
-        Ok(self.set_sub_chunk_raw(encode_data.serde(), intermediate, pos, dim)?)
+        Ok(self.set_sub_chunk_raw(encoder, intermediate, pos, dim)?)
     }
 
     /// Lowest level setting function for a sub chunk.
@@ -592,37 +599,6 @@ where
         self.db
             .set_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim), &bytes)
             .map_err(|ele| SubChunkSerDeError::WorldError(ele))?;
-
-        let wrote = self
-            .db
-            .get_sub_chunk_raw(ChunkKey::new_sub_chunk(pos, dim))
-            .unwrap();
-
-        if let Some(wrote) = wrote {
-            assert_eq!(wrote, bytes);
-
-            let sub_chunk_data = SubChunkSerDe::decode_bytes_as_sub_chunk(
-                &mut SubChunkSerDe,
-                &mut std::io::Cursor::new(wrote.clone()),
-                (pos.x, pos.z).into(),
-            )
-            .unwrap();
-
-            let sub_chunk = SubChunk::decode_from_transition(sub_chunk_data, dim, &mut ()).unwrap();
-
-            dump_u8_array_to_file(
-                format!(
-                    "write_{}_{:?}.bin",
-                    pos,
-                    SystemTime::from(UNIX_EPOCH).elapsed().unwrap().as_nanos()
-                )
-                .as_str(),
-                &wrote,
-            )
-            .unwrap();
-        } else {
-            panic!("No data returned from key which was just wrote");
-        }
 
         self.handle_exist((pos.x, pos.z).into(), dim);
         Ok(())
@@ -754,6 +730,6 @@ pub mod default_impl {
 }
 
 use crate::level::error::{SubChunkSerDeError, WholeLevelError, WorldPipelineError};
-use crate::utility::miner::{bounds_left_optimized, dump_u8_array_to_file, in_range};
+use crate::utility::miner::{bounds_left_optimized, in_range};
 #[cfg(feature = "default-impl")]
 pub use default_impl::*;

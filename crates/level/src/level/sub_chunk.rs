@@ -1,12 +1,12 @@
 pub use crate::level::error::SubChunkError;
-use crate::level::world_block::{BlockTransition, LevelBlock};
+use crate::level::world_block::LevelBlock;
 use crate::utility::miner::idx_3_to_1;
 use bedrockrs_shared::world::dimension::Dimension;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use nbtx::NbtError;
 use std::fmt::{Debug, Formatter};
-use std::io::Cursor;
 use std::io::Write;
+use std::io::{Cursor, Seek, SeekFrom};
 use std::mem::MaybeUninit;
 use thiserror::Error;
 use vek::{Vec2, Vec3};
@@ -15,9 +15,9 @@ pub type BlockLayer<T> = (Box<[u16; 4096]>, Vec<T>);
 
 #[allow(dead_code)]
 pub struct SubChunkTransition {
-    position: Vec3<i32>,
-    data_version: u8,
-    layers: Vec<BlockLayer<LevelBlock>>,
+    pub position: Vec3<i32>,
+    pub data_version: u8,
+    pub layers: Vec<BlockLayer<LevelBlock>>,
 }
 impl Debug for SubChunkTransition {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -154,10 +154,7 @@ pub trait SubChunkTrait: Sized {
     ) -> Result<Self, Self::Err>;
 
     /// This must create a transitional state from the current sub chunk information
-    fn to_transition(
-        &self,
-        info: &mut Self::TransitionInformation,
-    ) -> Result<SubChunkTransition, Self::Err>;
+    fn to_transition(&self) -> Result<SubChunkTransition, Self::Err>;
 
     /// This returns if the sub chunk is just air if so nothing is written to the database if this isn't desired behavior just always return false
     fn is_empty(&self) -> bool;
@@ -222,6 +219,11 @@ impl SubChunkDecoder for SubChunkSerDe {
             let palette_type = bytes.read_u8()?;
             let network = palette_type & 0x1 == 1;
             let bits_per_block = palette_type >> 1;
+
+            if bits_per_block == 0 {
+                break; // This signifies an empty sub chunk
+            }
+
             let blocks_per_word = 32 / bits_per_block;
             let word_count = (4096 + (blocks_per_word as i32) - 1) / (blocks_per_word as i32);
             let mask = (1 << bits_per_block) - 1;
@@ -245,15 +247,11 @@ impl SubChunkDecoder for SubChunkSerDe {
             let mut blocks = Vec::with_capacity(palette_count as usize);
             for _ in 0_usize..palette_count as usize {
                 if network {
-                    blocks.push(LevelBlock::from_transition(nbtx::from_bytes::<
-                        nbtx::NetworkLittleEndian,
-                        LevelBlock,
-                    >(bytes)?));
+                    blocks.push(nbtx::from_bytes::<nbtx::NetworkLittleEndian, LevelBlock>(
+                        bytes,
+                    )?);
                 } else {
-                    blocks.push(LevelBlock::from_transition(nbtx::from_bytes::<
-                        nbtx::LittleEndian,
-                        LevelBlock,
-                    >(bytes)?));
+                    blocks.push(nbtx::from_bytes::<nbtx::LittleEndian, LevelBlock>(bytes)?);
                 }
             }
             transitiondata.new_layer((block_indices, blocks));
@@ -299,9 +297,9 @@ impl SubChunkEncoder for SubChunkSerDe {
             buffer.write_u32::<LittleEndian>(layer.1.len() as u32)?;
             for blk in layer.1 {
                 if network {
-                    buffer.write(&nbtx::to_net_bytes(&blk.into_transition())?)?
+                    buffer.write(&nbtx::to_net_bytes(&blk)?)?
                 } else {
-                    buffer.write(&nbtx::to_le_bytes(&blk.into_transition())?)?
+                    buffer.write(&nbtx::to_le_bytes(&blk)?)?
                 };
             }
         }
@@ -340,7 +338,7 @@ impl SubChunk {
         self.is_empty = true;
     }
 
-    pub fn full(position: Vec3<i32>, dimension: Dimension, block: impl BlockTransition) -> Self {
+    pub fn full(position: Vec3<i32>, dimension: Dimension, block: LevelBlock) -> Self {
         let mut val = Self {
             blocks: Vec::with_capacity(1),
             position,
@@ -348,9 +346,8 @@ impl SubChunk {
             active_layer: 0,
             is_empty: false,
         };
-        val.blocks.push(Box::new(std::array::from_fn(|_| {
-            block.clone().into_transition()
-        })));
+        val.blocks
+            .push(Box::new(std::array::from_fn(|_| block.clone())));
         val
     }
 
@@ -382,16 +379,12 @@ impl SubChunk {
         layer.get_mut(idx_3_to_1::<u8>(xyz, 16u8, 16u8))
     }
 
-    pub fn set_block<Block: BlockTransition>(
-        &mut self,
-        xyz: Vec3<u8>,
-        block: Block,
-    ) -> Result<(), SubChunkError> {
+    pub fn set_block(&mut self, xyz: Vec3<u8>, block: LevelBlock) -> Result<(), SubChunkError> {
         let layer = self
             .blocks
             .get_mut(self.active_layer as usize)
             .ok_or(SubChunkError::LayerError(self.active_layer))?;
-        layer[idx_3_to_1::<u8>(xyz, 16u8, 16u8)] = block.into_transition();
+        layer[idx_3_to_1::<u8>(xyz, 16u8, 16u8)] = block;
         self.is_empty = false;
         Ok(())
     }
@@ -468,27 +461,26 @@ impl SubChunkTrait for SubChunk {
         for (layer_index, (indices, blocks)) in data.layers.into_iter().enumerate() {
             let layer: &mut Box<[MaybeUninit<LevelBlock>; 4096]> = &mut layers[layer_index];
             for whole_index in 0..4096usize {
-                layer[whole_index].write(LevelBlock::from_other(
-                    &blocks[indices[whole_index] as usize],
-                ));
+                layer[whole_index].write(blocks[indices[whole_index] as usize].clone());
             }
         }
 
-        let layers = unsafe { std::mem::transmute(layers) };
+        if layers.is_empty() {
+            Ok(Self::empty(data.position, dimension))
+        } else {
+            let layers = unsafe { std::mem::transmute(layers) };
 
-        Ok(Self {
-            blocks: layers,
-            position: data.position,
-            dimension,
-            active_layer: 0,
-            is_empty: false,
-        })
+            Ok(Self {
+                blocks: layers,
+                position: data.position,
+                dimension,
+                active_layer: 0,
+                is_empty: false,
+            })
+        }
     }
 
-    fn to_transition(
-        &self,
-        _: &mut Self::TransitionInformation,
-    ) -> Result<SubChunkTransition, Self::Err> {
+    fn to_transition(&self) -> Result<SubChunkTransition, Self::Err> {
         let mut layers: Vec<BlockLayer<LevelBlock>> = Vec::with_capacity(self.blocks.len());
         for layer in 0..self.blocks.len() {
             layers.push(self.encode_single_layer(layer));
@@ -506,9 +498,34 @@ impl SubChunkTrait for SubChunk {
 }
 
 fn bits_needed_to_store(val: u32) -> u8 {
-    if val == 0 {
+    if val <= 1 {
         1
     } else {
-        (32 - val.leading_zeros()) as u8
+        if val.count_ones() == 1 {
+            // In binary, we might have something like
+            // 001
+            // That is 4. We only need 2 bits
+            // to store it since 0,1,2,3 is 4 combinations.
+            // So to compute that we just count how may trailing zeros it has
+
+            val.trailing_zeros() as u8
+        } else {
+            32 - val.leading_zeros() as u8
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn verify_store_sanity() {
+        let test_data = [(2, 1), (4, 2), (3, 2), (5, 3), (8, 3)];
+
+        for (input, expected) in test_data {
+            let stored = bits_needed_to_store(input);
+
+            assert_eq!(expected, stored);
+        }
     }
 }

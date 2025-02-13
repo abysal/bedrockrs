@@ -223,7 +223,7 @@ impl RawWorldTrait for RustyDBInterface {
 
             iter.current(&mut key, data);
             let len = key.len();
-            let mut cursor = Cursor::new(&mut key);
+            let mut cursor = Cursor::new(&key);
 
             if len == 9 || len == 13 {
                 // Does a little hack to make sure it isn't reading a key that it doesn't want to
@@ -244,6 +244,7 @@ impl RawWorldTrait for RustyDBInterface {
                     } else {
                         Dimension::Overworld
                     };
+
                     out_set.insert((dim, (x, y).into()));
                 }
             }
